@@ -16,10 +16,12 @@ env:
   # Bump it on purpose (see README) rather than tracking a moving branch.
   TARGET_REF: e1e275a62ab157e53e609c91cfd55805d7fa6bc3
   IMAGE: auto-fix-mcp-target:ci
+  # gitleaks v8.30.1, pinned by image digest: a tag can be moved, a digest cannot.
+  GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 
 jobs:
   build-and-smoke-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned so a change to the "latest" runner image cannot alter results
     timeout-minutes: 10
     steps:
       # Actions are pinned to commit SHAs, not tags, so a moved tag cannot change what runs.
@@ -48,3 +50,54 @@ jobs:
       - name: Show container logs if anything failed
         if: failure()
         run: docker logs target || true
+
+  # Stage 2. Report-only on purpose: the target is deliberately vulnerable, so findings are
+  # expected. Stage 5 adds the quality gate that decides what fails the build.
+  secrets-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the target app (pinned commit, full git history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.TARGET_REF }}
+          path: target
+          fetch-depth: 0 # secrets can hide in old commits, so scan the history too
+          persist-credentials: false
+
+      - name: Scan the target for secrets (gitleaks)
+        # Runs as the runner's own user so git trusts the checkout; the repo is mounted read-only.
+        # --redact keeps secret values out of the log and the report.
+        # --exit-code 0 only means "do not fail on findings"; a scan error still fails the job.
+        run: |
+          mkdir -p reports
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD/target:/repo:ro" -v "$PWD/reports:/reports" \
+            "$GITLEAKS_IMAGE" git /repo --redact --no-banner \
+            --report-format json --report-path /reports/gitleaks.json --exit-code 0
+
+      - name: Summarise the findings
+        run: |
+          # A scan that produced no report is a failure, not a pass.
+          test -s reports/gitleaks.json || { echo "no gitleaks report was produced"; exit 1; }
+          count="$(jq length reports/gitleaks.json)"
+          echo "gitleaks findings: $count"
+          {
+            echo "### Secrets scan (gitleaks v8.30.1)"
+            echo
+            echo "Findings: **${count}** (values redacted)"
+            if [ "$count" -gt 0 ]; then
+              echo
+              echo "| Rule | File | Line |"
+              echo "|---|---|---|"
+              jq -r '.[] | "| \(.RuleID) | \(.File) | \(.StartLine) |"' reports/gitleaks.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gitleaks-report
+          path: reports/gitleaks.json
+          retention-days: 14
