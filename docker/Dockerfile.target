@@ -1,8 +1,13 @@
 # Builds the target app into a container. The pipeline checks the app out into ./target first,
 # so the build context is the root of this repo and the app's own repo is never modified.
-# Pinned by digest (node 24 on Alpine, resolved 2026-11-03) so the image that is scanned cannot drift.
-# To update, look up the new digest, change it here and re-read the scan results in the same commit.
-FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
+#
+# Two stages. The first installs dependencies with npm; the second is a plain Alpine with only the
+# Node binary and the app, so npm (and the packages bundled with it) never reach the final image.
+# Both base images are pinned by digest so the image that is scanned cannot drift. To update one,
+# look up the new digest, change it here and re-read the scan results in the same pull request.
+
+# Stage 1: build. Node 24 on Alpine 3.24.3, resolved 2026-11-03.
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS build
 
 ENV NODE_ENV=production
 WORKDIR /app
@@ -13,7 +18,23 @@ RUN npm ci --omit=dev
 
 COPY target/ ./
 
-# Run as the unprivileged "node" user that the base image provides, not as root.
+# Stage 2: runtime. Alpine 3.24.3 (the same release as the build stage), resolved 2026-11-04.
+FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+
+# The Node binary needs libstdc++. The package version comes from the Alpine repository at build time
+# and is not pinned; the image scan and SBOM record what was installed.
+RUN apk add --no-cache libstdc++ \
+ && addgroup -g 1000 node \
+ && adduser -u 1000 -G node -s /bin/sh -D node
+
+COPY --from=build /usr/local/bin/node /usr/local/bin/node
+
+WORKDIR /app
+COPY --from=build /app /app
+
+ENV NODE_ENV=production
+
+# Run as an unprivileged user, not as root.
 USER node
 EXPOSE 3000
 CMD ["node", "index.js"]
