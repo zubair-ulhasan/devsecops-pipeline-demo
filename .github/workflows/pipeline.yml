@@ -406,10 +406,10 @@ jobs:
           path: reports/osv.json
           retention-days: 14
 
-  # Stage 5b. The quality gate. SHADOW MODE until the owner approves the rules in gate/policy.json and
-  # flips its "enforce" flag: it prints what would fail but cannot fail the build yet.
+  # Stage 5b. The quality gate. ENFORCING (gate/policy.json, "enforce": true): a tripped rule or a
+  # missing report fails this job, and branch protection requires it before anything merges to main.
   gate:
-    name: quality gate (shadow mode)
+    name: quality gate
     needs: [secrets-scan, sast, sca, build-and-smoke-test]
     if: ${{ !cancelled() }} # evaluate even if a scan job failed: a missing report is itself a gate failure
     runs-on: ubuntu-24.04

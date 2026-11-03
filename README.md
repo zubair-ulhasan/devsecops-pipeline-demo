@@ -14,7 +14,7 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 | 2. Secrets scan | Scans the target for committed secrets (gitleaks, report-only) | Done |
 | 3. SAST and SCA | Static code analysis (Semgrep) and a dependency vulnerability scan (OSV-Scanner), report-only | Done |
 | 4. Image scan and SBOM | Scans the container image (Trivy) and produces a CycloneDX SBOM (Syft) as a build artifact, report-only | Done |
-| 5. DAST and quality gate | ZAP baseline and authenticated OpenAPI scans (passive, report-only) against the running container, plus a quality gate in shadow mode (`gate/policy.json`) | DAST ran; gate rules awaiting owner approval |
+| 5. DAST and quality gate | ZAP baseline and authenticated OpenAPI scans (passive) against the running container, plus an enforcing quality gate (`gate/policy.json`, waivers in `gate/accepted.json`) | Gate live and enforcing; awaiting sign-off |
 | 6. Write-up | Before/after results against the answer key, including a multi-stage build that drops npm from the image (planned: removes 19 of the 25 Trivy findings) | Planned |
 
 ## How it works
@@ -23,6 +23,12 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 - Actions are pinned to commit SHAs and the workflow token is read-only.
 - `docker/Dockerfile.target` builds the checked-out target (`./target`) into an image.
 - `scripts/smoke-test.sh` waits for the container to answer and fails the build if it never returns HTTP 200.
+
+## Changing this repo
+
+`main` is protected: the pipeline (all five checks, including the quality gate) must pass before anything merges, and direct pushes to `main` are no longer the workflow. Make changes on a branch and open a pull request.
+
+The gate (`gate/policy.json`) fails the build on: a missing or empty scan report, any secret, a Semgrep ERROR, a dependency advisory scoring 9.0 or higher, a CRITICAL image vulnerability with a fix, or a High-risk ZAP alert. Known findings in the deliberately vulnerable target are waived in `gate/accepted.json`, each with a reason and an expiry date; an expired waiver trips its rule again.
 
 ## Updating the target
 

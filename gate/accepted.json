@@ -1,1 +1,23 @@
-[]
+[
+  {
+    "key": "gitleaks:generic-api-key:data.js:33",
+    "reason": "Seeded sandbox connector secret in a deliberately vulnerable target; not a real credential. Removing it would change the target.",
+    "owner": "zubair-ulhasan",
+    "approved": "2026-11-04",
+    "expires": "2027-03-31"
+  },
+  {
+    "key": "osv:proxy-addr@2.0.7",
+    "reason": "Known vulnerable dependency in the deliberately vulnerable target (fix: proxy-addr 2.0.8). Kept so the pipeline has a real finding to catch; the target is not modified.",
+    "owner": "zubair-ulhasan",
+    "approved": "2026-11-04",
+    "expires": "2027-03-31"
+  },
+  {
+    "key": "trivy:CVE-2026-90711:proxy-addr@2.0.7",
+    "reason": "Same issue as the dependency-scan waiver above, seen in the image scan.",
+    "owner": "zubair-ulhasan",
+    "approved": "2026-11-04",
+    "expires": "2027-03-31"
+  }
+]

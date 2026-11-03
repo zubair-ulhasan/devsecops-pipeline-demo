@@ -1,6 +1,6 @@
 {
-  "_comment": "Quality gate policy. PROPOSAL awaiting owner approval: 'enforce' stays false (shadow mode) until approved, so nothing here can fail the build yet. In shadow mode the gate prints what WOULD fail.",
-  "enforce": false,
+  "_comment": "Quality gate policy, approved by the owner on 2026-11-04 and ENFORCING: a tripped rule or a missing report fails the build. Known accepted findings live in accepted.json with a reason and an expiry date; an expired waiver trips its rule again. Semgrep stays at ERROR and image findings at CRITICAL until the multi-stage build, then HIGH is revisited.",
+  "enforce": true,
   "rules": [
     {
       "id": "scan-integrity",
