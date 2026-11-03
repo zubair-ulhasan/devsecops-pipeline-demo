@@ -175,16 +175,27 @@ jobs:
             without="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000$path")"
             echo "auth probe GET $path: with token=$with, without token=$without"
           done
+          cp scripts/zap_hooks.py reports/zap/zap_hooks.py
+          # Comparison run first: the same API scan with NO credentials, to show what authentication adds.
           rc=0
           docker run --rm --network host -v "$PWD/reports/zap:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-api-scan.py -t /zap/wrk/openapi.yaml -f openapi -S -J zap-api-noauth.json \
+            -z "-config telemetry.enabled=false" > reports/zap/api-noauth.log 2>&1 || rc=$?
+          echo "zap-api-scan (no credentials) exit code: $rc"
+          test "$rc" -le 2 || { echo "zap-api-scan (no credentials) failed"; tail -n 30 reports/zap/api-noauth.log; exit 1; }
+          # The real run: the bearer token is added by a hook (see scripts/zap_hooks.py), because
+          # ZAP splits the -z option string on spaces and "Bearer <token>" cannot be passed that way.
+          rc=0
+          docker run --rm --network host -e ZAP_AUTH_TOKEN="$token" -v "$PWD/reports/zap:/zap/wrk:rw" "$ZAP_IMAGE" \
             zap-api-scan.py -t /zap/wrk/openapi.yaml -f openapi -S -J zap-api.json -r zap-api.html \
-            -z "-config telemetry.enabled=false -config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstring=Authorization -config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=Bearer ${token}" \
+            --hook=/zap/wrk/zap_hooks.py -z "-config telemetry.enabled=false" \
             > reports/zap/api.log 2>&1 || rc=$?
           tail -n 45 reports/zap/api.log
           echo "zap-api-scan exit code: $rc (0 = clean, 1 = failures, 2 = warnings, 3 = error)"
           test "$rc" -le 2 || { echo "zap-api-scan failed"; exit 1; }
+          grep -q "auth hook: Authorization header rule added" reports/zap/api.log || { echo "the auth hook did not run"; exit 1; }
           # The token must not end up in anything we keep.
-          if grep -q -F "$token" reports/zap/zap-api.json reports/zap/zap-baseline.json; then echo "token found in a report"; exit 1; fi
+          if grep -q -F "$token" reports/zap/zap-api.json reports/zap/zap-baseline.json reports/zap/zap-api-noauth.json; then echo "token found in a report"; exit 1; fi
 
       - name: Log what ran and summarise the DAST findings
         run: |
@@ -192,7 +203,7 @@ jobs:
           echo "mentions of the hosted instance in the ZAP logs and spec copy (all must be 0):"
           grep -c -i onrender reports/zap/baseline.log reports/zap/api.log reports/zap/openapi.yaml || true
           echo "operations in the spec: $(grep -c -E '^    (get|post|put|patch|delete):' reports/zap/openapi.yaml)"
-          for f in baseline api; do
+          for f in baseline api-noauth api; do
             j="reports/zap/zap-$f.json"
             echo "=== ZAP $f ==="
             echo "ZAP $(jq -r '.["@version"]' "$j"), sites scanned: $(jq -r '[.site[]? | .["@name"]] | join(", ")' "$j")"
