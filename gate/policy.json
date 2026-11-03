@@ -1,0 +1,42 @@
+{
+  "_comment": "Quality gate policy. PROPOSAL awaiting owner approval: 'enforce' stays false (shadow mode) until approved, so nothing here can fail the build yet. In shadow mode the gate prints what WOULD fail.",
+  "enforce": false,
+  "rules": [
+    {
+      "id": "scan-integrity",
+      "tool": "integrity",
+      "description": "Every scan must have produced a report and actually scanned something (files, SBOM components, image targets, ZAP sites)."
+    },
+    {
+      "id": "secrets-any",
+      "tool": "gitleaks",
+      "description": "Any secret found in the target's code or history.",
+      "min_findings": 1
+    },
+    {
+      "id": "sast-error",
+      "tool": "semgrep",
+      "description": "Semgrep findings at severity ERROR.",
+      "severities": ["ERROR"]
+    },
+    {
+      "id": "sca-critical",
+      "tool": "osv",
+      "description": "A dependency in the lockfile with a known advisory scoring 9.0 or higher (critical).",
+      "min_score": 9.0
+    },
+    {
+      "id": "image-critical-fixable",
+      "tool": "trivy",
+      "description": "A CRITICAL image vulnerability that has a published fix.",
+      "severities": ["CRITICAL"],
+      "require_fix": true
+    },
+    {
+      "id": "dast-high",
+      "tool": "zap",
+      "description": "A ZAP alert at High risk.",
+      "min_riskcode": 3
+    }
+  ]
+}

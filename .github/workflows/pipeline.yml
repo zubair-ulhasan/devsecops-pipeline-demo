@@ -29,13 +29,15 @@ env:
   # Trivy's vulnerability database is downloaded at run time and cannot be pinned.
   TRIVY_IMAGE: ghcr.io/aquasecurity/trivy@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
   SYFT_IMAGE: ghcr.io/anchore/syft@sha256:4cc92b64ca74ffca4c94d4c8fcc01f217731375300be14d0b6eeb2e82eaa110a
+  # ZAP 2.17.0 (latest stable; weekly pre-releases are not used), pinned by digest.
+  ZAP_IMAGE: ghcr.io/zaproxy/zaproxy@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
 
 jobs:
-  # Stages 1 and 4. The image scan and SBOM run on the exact image that was just smoke-tested.
+  # Stages 1, 4 and 5a. The image scan, SBOM and DAST run on the exact container that was just smoke-tested.
   build-and-smoke-test:
-    name: build, smoke test, image scan and SBOM
+    name: build, smoke test, image scan, SBOM and DAST
     runs-on: ubuntu-24.04 # pinned so a change to the "latest" runner image cannot alter results
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       # Actions are pinned to commit SHAs, not tags, so a moved tag cannot change what runs.
       - name: Check out this pipeline repo
@@ -133,6 +135,73 @@ jobs:
           path: |
             reports/sbom.cdx.json
             reports/trivy.json
+          retention-days: 14
+
+      # Stage 5a. DAST with ZAP against the container that is still running on port 3000.
+      # Passive only: the baseline scan crawls and inspects responses without attacking, and the API
+      # scan runs with -S (safe mode), so no active attack rules are sent. Report-only: the gate job
+      # decides what fails. ZAP downloads add-on updates at start-up, so its rules are not fully
+      # pinned; the logs record what ran.
+      - name: DAST, baseline scan (ZAP, passive, unauthenticated)
+        run: |
+          mkdir -p reports/zap && chmod 777 reports/zap
+          rc=0
+          docker run --rm --network host -v "$PWD/reports/zap:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-baseline.py -t http://localhost:3000 -J zap-baseline.json -r zap-baseline.html -m 2 \
+            -z "-config telemetry.enabled=false" > reports/zap/baseline.log 2>&1 || rc=$?
+          tail -n 45 reports/zap/baseline.log
+          echo "zap-baseline exit code: $rc (0 = clean, 1 = failures, 2 = warnings, 3 = error)"
+          test "$rc" -le 2 || { echo "zap-baseline failed"; exit 1; }
+
+      - name: DAST, API scan from the OpenAPI spec (ZAP, passive, logged in as the lowest-privilege user)
+        run: |
+          # Point the spec at the local container only: its first server entry is the hosted instance.
+          cp target/openapi.yaml reports/zap/openapi.yaml
+          sed -i 's#https://auto-fix-mcp.onrender.com#http://localhost:3000#g' reports/zap/openapi.yaml
+          if grep -q -i onrender reports/zap/openapi.yaml; then echo "the spec still points at the hosted instance"; exit 1; fi
+          # Log in as the seeded customer account. The password is read from the target's own public
+          # answer key at run time, so no credential is stored in this repo. The token is masked.
+          user="customer@account1.test"
+          pass="$(grep -m1 "^| $user" target/VULNERABILITIES.md | awk -F'|' '{gsub(/ /, "", $3); print $3}')"
+          test -n "$pass" || { echo "could not read the seeded test password"; exit 1; }
+          token="$(curl -s -X POST http://localhost:3000/api/v1/auth/login -H 'content-type: application/json' \
+            -d "$(jq -n --arg e "$user" --arg p "$pass" '{email: $e, password: $p}')" | jq -r '.token')"
+          test -n "$token" -a "$token" != "null" || { echo "login failed"; exit 1; }
+          echo "::add-mask::$token"
+          echo "logged in as $user (token masked)"
+          rc=0
+          docker run --rm --network host -v "$PWD/reports/zap:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-api-scan.py -t /zap/wrk/openapi.yaml -f openapi -S -J zap-api.json -r zap-api.html \
+            -z "-config telemetry.enabled=false -config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstring=Authorization -config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=Bearer ${token}" \
+            > reports/zap/api.log 2>&1 || rc=$?
+          tail -n 45 reports/zap/api.log
+          echo "zap-api-scan exit code: $rc (0 = clean, 1 = failures, 2 = warnings, 3 = error)"
+          test "$rc" -le 2 || { echo "zap-api-scan failed"; exit 1; }
+          # The token must not end up in anything we keep.
+          if grep -q -F "$token" reports/zap/zap-api.json reports/zap/zap-baseline.json; then echo "token found in a report"; exit 1; fi
+
+      - name: Log what ran and summarise the DAST findings
+        run: |
+          for f in zap-baseline zap-api; do test -s "reports/zap/$f.json" || { echo "no $f report was produced"; exit 1; }; done
+          echo "mentions of the hosted instance in the ZAP logs and spec copy (all must be 0):"
+          grep -c -i onrender reports/zap/baseline.log reports/zap/api.log reports/zap/openapi.yaml || true
+          echo "operations in the spec: $(grep -c -E '^    (get|post|put|patch|delete):' reports/zap/openapi.yaml)"
+          for f in baseline api; do
+            j="reports/zap/zap-$f.json"
+            echo "=== ZAP $f ==="
+            echo "ZAP $(jq -r '.["@version"]' "$j"), sites scanned: $(jq -r '[.site[]? | .["@name"]] | join(", ")' "$j")"
+            grep -E '^(FAIL-NEW|Total of)' "reports/zap/$f.log" | head -3 || true
+            echo "alerts by risk (3=High 2=Medium 1=Low 0=Info): $(jq -r '[.site[]?.alerts[]?] | group_by(.riskcode) | map("risk\(.[0].riskcode)=\(length)") | join(", ")' "$j")"
+            jq -r '[.site[]?.alerts[]?] | sort_by(-(.riskcode | tonumber)) | .[] | "  - \(.riskdesc) | \(.name) | plugin \(.pluginid) | \(.instances | length) instance(s)"' "$j"
+          done
+
+      - name: Upload the DAST reports
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-report
+          path: |
+            reports/zap/zap-baseline.json
+            reports/zap/zap-api.json
           retention-days: 14
 
       - name: Show container logs if anything failed
@@ -317,3 +386,29 @@ jobs:
           name: osv-report
           path: reports/osv.json
           retention-days: 14
+
+  # Stage 5b. The quality gate. SHADOW MODE until the owner approves the rules in gate/policy.json and
+  # flips its "enforce" flag: it prints what would fail but cannot fail the build yet.
+  gate:
+    name: quality gate (shadow mode)
+    needs: [secrets-scan, sast, sca, build-and-smoke-test]
+    if: ${{ !cancelled() }} # evaluate even if a scan job failed: a missing report is itself a gate failure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out this pipeline repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download every scan report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: reports
+          merge-multiple: true
+
+      - name: Show which reports the gate received
+        run: ls -l reports
+
+      - name: Evaluate the gate
+        run: python3 scripts/gate.py --policy gate/policy.json --accepted gate/accepted.json --reports reports
