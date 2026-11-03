@@ -70,19 +70,20 @@ jobs:
 
       - name: Generate the SBOM (Syft, CycloneDX JSON)
         run: |
-          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e SYFT_CHECK_FOR_APP_UPDATE=false \
+          # The scanner image has no writable /tmp for a non-root user, so give it an in-memory one.
+          docker run --rm --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,mode=1777 -e HOME=/tmp -e SYFT_CHECK_FOR_APP_UPDATE=false \
             -v "$PWD/artifacts:/in:ro" -v "$PWD/reports:/out" \
             "$SYFT_IMAGE" scan docker-archive:/in/image.tar -o cyclonedx-json=/out/sbom.cdx.json
 
       - name: Scan the image for vulnerabilities (Trivy)
         # Report-only: --exit-code 0 means findings do not fail the job; a scan error still does.
         run: |
-          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+          docker run --rm --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,mode=1777 -e HOME=/tmp \
             -v "$PWD/artifacts:/in:ro" -v "$PWD/reports:/out" -v "$PWD/cache:/cache" \
             "$TRIVY_IMAGE" image --input /in/image.tar --cache-dir /cache \
             --scanners vuln --format json --output /out/trivy.json --exit-code 0 --no-progress
           echo "--- scanner and vulnerability database versions ---"
-          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/cache:/cache" \
+          docker run --rm --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,mode=1777 -e HOME=/tmp -v "$PWD/cache:/cache" \
             "$TRIVY_IMAGE" version --cache-dir /cache
 
       - name: Log what ran, check the SBOM and summarise the scan
