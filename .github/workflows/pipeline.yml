@@ -169,6 +169,12 @@ jobs:
           test -n "$token" -a "$token" != "null" || { echo "login failed"; exit 1; }
           echo "::add-mask::$token"
           echo "logged in as $user (token masked)"
+          # Harness check (not a finding): does the token change what the API returns?
+          for path in /api/v1/orgs/org_1 /api/v1/orgs/org_1/usage; do
+            with="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://localhost:3000$path")"
+            without="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000$path")"
+            echo "auth probe GET $path: with token=$with, without token=$without"
+          done
           rc=0
           docker run --rm --network host -v "$PWD/reports/zap:/zap/wrk:rw" "$ZAP_IMAGE" \
             zap-api-scan.py -t /zap/wrk/openapi.yaml -f openapi -S -J zap-api.json -r zap-api.html \
@@ -193,6 +199,8 @@ jobs:
             grep -E '^(FAIL-NEW|Total of)' "reports/zap/$f.log" | head -3 || true
             echo "alerts by risk (3=High 2=Medium 1=Low 0=Info): $(jq -r '[.site[]?.alerts[]?] | group_by(.riskcode) | map("risk\(.[0].riskcode)=\(length)") | join(", ")' "$j")"
             jq -r '[.site[]?.alerts[]?] | sort_by(-(.riskcode | tonumber)) | .[] | "  - \(.riskdesc) | \(.name) | plugin \(.pluginid) | \(.instances | length) instance(s)"' "$j"
+            echo "responses behind the client-error alert (method, path, evidence):"
+            jq -r '.site[]?.alerts[]? | select(.pluginid == "100000") | .instances[] | "    \(.method) \(.uri | sub("^http://localhost:3000"; "")) -> \(.evidence // "no evidence")"' "$j" | sort | head -20
           done
 
       - name: Upload the DAST reports
