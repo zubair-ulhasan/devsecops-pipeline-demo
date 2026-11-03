@@ -1,0 +1,50 @@
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: the pipeline only needs to read code.
+permissions:
+  contents: read
+
+env:
+  TARGET_REPO: zubair-ulhasan/auto_fix_mcp
+  # Pinned commit of the target app, so every run scans the same code.
+  # Bump it on purpose (see README) rather than tracking a moving branch.
+  TARGET_REF: e1e275a62ab157e53e609c91cfd55805d7fa6bc3
+  IMAGE: auto-fix-mcp-target:ci
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned to commit SHAs, not tags, so a moved tag cannot change what runs.
+      - name: Check out this pipeline repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the target app (pinned commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.TARGET_REF }}
+          path: target
+          persist-credentials: false
+
+      - name: Build the container image
+        run: docker build -f docker/Dockerfile.target -t "$IMAGE" .
+
+      - name: Start the container
+        run: docker run -d --name target -p 3000:3000 "$IMAGE"
+
+      - name: Smoke test (health endpoint)
+        run: bash scripts/smoke-test.sh http://localhost:3000/health
+
+      - name: Show container logs if anything failed
+        if: failure()
+        run: docker logs target || true
