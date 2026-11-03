@@ -18,6 +18,11 @@ env:
   IMAGE: auto-fix-mcp-target:ci
   # gitleaks v8.30.1, pinned by image digest: a tag can be moved, a digest cannot.
   GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  # Semgrep 1.183.0 (image digest) and the rule set at a fixed commit (2026-10-21), so findings do not drift.
+  SEMGREP_IMAGE: semgrep/semgrep@sha256:2e45517a85e13a9cca14a2a00df6bb48affd66b8ebfae1b0991cd57578362fb0
+  SEMGREP_RULES_REF: 16b9e6d45f10649f6a531ec4838ed9924372c3bc
+  # OSV-Scanner v2.7.0, pinned by digest. The advisory data it queries is live and cannot be pinned.
+  OSV_IMAGE: ghcr.io/google/osv-scanner@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0
 
 jobs:
   build-and-smoke-test:
@@ -102,4 +107,130 @@ jobs:
         with:
           name: gitleaks-report
           path: reports/gitleaks.json
+          retention-days: 14
+
+  # Stage 3a. Static analysis (SAST) with Semgrep. Report-only until the stage-5 gate.
+  # The scanner image and the rule set are both pinned, so the same code gives the same findings.
+  sast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the target app (pinned commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.TARGET_REF }}
+          path: target
+          persist-credentials: false
+
+      - name: Check out the Semgrep rule set (pinned commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: semgrep/semgrep-rules
+          ref: ${{ env.SEMGREP_RULES_REF }}
+          path: rules
+          persist-credentials: false
+
+      - name: Scan the target (Semgrep, JavaScript rules)
+        # Both mounts are read-only and telemetry is off. Semgrep exits 0 when it finds issues,
+        # so only a real scan error fails this step.
+        run: |
+          mkdir -p reports
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD/target:/src:ro" -v "$PWD/rules:/rules:ro" -v "$PWD/reports:/reports" \
+            "$SEMGREP_IMAGE" semgrep scan --config /rules/javascript \
+            --metrics=off --disable-version-check \
+            --json --output /reports/semgrep.json /src
+
+      - name: Log what ran and summarise the findings
+        run: |
+          # A scan that produced no report, or scanned no files, is a failure, not a pass.
+          test -s reports/semgrep.json || { echo "no semgrep report was produced"; exit 1; }
+          scanned="$(jq '(.paths.scanned // []) | length' reports/semgrep.json)"
+          findings="$(jq '.results | length' reports/semgrep.json)"
+          errors="$(jq '.errors | length' reports/semgrep.json)"
+          echo "semgrep $(jq -r '.version' reports/semgrep.json): scanned $scanned files, $findings findings, $errors scan errors"
+          echo "files scanned:"
+          jq -r '(.paths.scanned // [])[]' reports/semgrep.json | sed 's|^/src/||; s|^|  |'
+          echo "findings:"
+          jq -r '.results[] | "  - \(.extra.severity) | \(.check_id | split(".") | last) | \(.path | ltrimstr("/src/")):\(.start.line)"' reports/semgrep.json
+          if [ "$errors" -gt 0 ]; then
+            echo "scan errors:"
+            jq -r '.errors[] | "  - \(.type | tostring) \(.path // "")"' reports/semgrep.json
+          fi
+          test "$scanned" -gt 0 || { echo "semgrep scanned no files"; exit 1; }
+          {
+            echo "### SAST (Semgrep 1.183.0, rules from commit 16b9e6d)"
+            echo
+            echo "Scanned **${scanned}** files, **${findings}** findings, ${errors} scan errors."
+            if [ "$findings" -gt 0 ]; then
+              echo
+              echo "| Severity | Rule | Location |"
+              echo "|---|---|---|"
+              jq -r '.results[] | "| \(.extra.severity) | \(.check_id | split(".") | last) | \(.path | ltrimstr("/src/")):\(.start.line) |"' reports/semgrep.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: semgrep-report
+          path: reports/semgrep.json
+          retention-days: 14
+
+  # Stage 3b. Dependency scan (SCA) with OSV-Scanner on the lockfile. Report-only until stage 5.
+  sca:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the target app (pinned commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.TARGET_REF }}
+          path: target
+          persist-credentials: false
+
+      - name: Scan the lockfile (OSV-Scanner)
+        # OSV-Scanner exits 1 when it finds vulnerabilities and 0 when it finds none;
+        # any other exit code is a real error and fails the job.
+        run: |
+          mkdir -p reports
+          rc=0
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD/target:/repo:ro" \
+            "$OSV_IMAGE" scan source --format json -L /repo/package-lock.json \
+            > reports/osv.json 2> reports/osv.log || rc=$?
+          echo "--- osv-scanner log ---"
+          cat reports/osv.log
+          echo "--- end log ---"
+          echo "osv-scanner exit code: $rc (0 = none found, 1 = vulnerabilities found, other = error)"
+          test "$rc" -le 1 || { echo "osv-scanner failed"; exit 1; }
+
+      - name: Log what ran and summarise the findings
+        run: |
+          test -s reports/osv.json || { echo "no osv-scanner report was produced"; exit 1; }
+          # The packages-scanned count only appears in the scanner's own log.
+          grep -i -E 'package' reports/osv.log | head -5 || echo "::warning::could not find a packages-scanned line in the osv-scanner log"
+          vulnerable="$(jq '[.results[]?.packages[]?] | length' reports/osv.json)"
+          advisories="$(jq '[.results[]?.packages[]?.vulnerabilities[]?.id] | unique | length' reports/osv.json)"
+          echo "vulnerable packages: $vulnerable, distinct advisories: $advisories (advisory data queried $(date -u +%F))"
+          jq -r '.results[]?.packages[]? | "  - \(.package.name)@\(.package.version) | \([.vulnerabilities[].id] | .[:5] | join(", ")) | worst score: \(([.groups[]?.max_severity? | select(. != null and . != "") | tonumber] | max) // "n/a")"' reports/osv.json
+          {
+            echo "### SCA (OSV-Scanner v2.7.0, advisory data queried $(date -u +%F))"
+            echo
+            echo "Vulnerable packages: **${vulnerable}**, distinct advisories: **${advisories}**."
+            if [ "$vulnerable" -gt 0 ]; then
+              echo
+              echo "| Package | Advisories (first 5) | Worst score |"
+              echo "|---|---|---|"
+              jq -r '.results[]?.packages[]? | "| \(.package.name)@\(.package.version) | \([.vulnerabilities[].id] | .[:5] | join(", ")) | \(([.groups[]?.max_severity? | select(. != null and . != "") | tonumber] | max) // "n/a") |"' reports/osv.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: osv-report
+          path: reports/osv.json
           retention-days: 14
