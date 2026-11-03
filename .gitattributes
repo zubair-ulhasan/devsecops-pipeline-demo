@@ -1,0 +1,4 @@
+# Keep shell scripts and Dockerfiles on LF so they run on Linux runners even when cloned on Windows.
+*.sh text eol=lf
+Dockerfile* text eol=lf
+*.yml text eol=lf

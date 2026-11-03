@@ -1,0 +1,17 @@
+# Builds the target app into a container. The pipeline checks the app out into ./target first,
+# so the build context is the root of this repo and the app's own repo is never modified.
+FROM node:24-alpine
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Install dependencies from the lockfile first so this layer is cached between builds.
+COPY target/package.json target/package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY target/ ./
+
+# Run as the unprivileged "node" user that the base image provides, not as root.
+USER node
+EXPOSE 3000
+CMD ["node", "index.js"]
