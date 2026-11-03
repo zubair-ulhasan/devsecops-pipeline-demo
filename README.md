@@ -14,8 +14,8 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 | 2. Secrets scan | Scans the target for committed secrets (gitleaks, report-only) | Done |
 | 3. SAST and SCA | Static code analysis (Semgrep) and a dependency vulnerability scan (OSV-Scanner), report-only | Done |
 | 4. Image scan and SBOM | Scans the container image (Trivy) and produces a CycloneDX SBOM (Syft) as a build artifact, report-only | Done |
-| 5. DAST and quality gate | Runs a ZAP baseline scan against the running container; fails the build on critical findings | Planned |
-| 6. Write-up | Before/after results against the answer key | Planned |
+| 5. DAST and quality gate | ZAP baseline and authenticated OpenAPI scans (passive, report-only) against the running container, plus a quality gate in shadow mode (`gate/policy.json`) | DAST ran; gate rules awaiting owner approval |
+| 6. Write-up | Before/after results against the answer key, including a multi-stage build that drops npm from the image (planned: removes 19 of the 25 Trivy findings) | Planned |
 
 ## How it works
 
