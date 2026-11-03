@@ -10,7 +10,7 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 
 | Stage | What it does | State |
 |---|---|---|
-| 1. Build and smoke test | Builds the target into a container (non-root user, lockfile install) and checks that `/health` answers | Written; first pipeline run pending |
+| 1. Build and smoke test | Builds the target into a container (non-root user, lockfile install) and checks that `/health` answers | Done (first run passed) |
 | 2. Secrets scan | Scans the target for committed secrets | Planned |
 | 3. SAST and SCA | Static code analysis and a dependency vulnerability scan | Planned |
 | 4. Image scan and SBOM | Scans the container image and produces a CycloneDX SBOM as a build artifact | Planned |
