@@ -26,7 +26,7 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 
 ## Changing this repo
 
-`main` is protected: the pipeline (all five checks, including the quality gate) must pass before anything merges, and direct pushes to `main` are no longer the workflow. Make changes on a branch and open a pull request.
+Intended workflow: make changes on a branch and open a pull request, so the pipeline (all five checks, including the quality gate) runs before anything reaches `main`; direct pushes to `main` are no longer the workflow. **Branch protection is not enabled yet.** GitHub offers it for a private repository only on a paid plan (or for a public repository), so for now the pull-request rule is a convention, and the gate cannot block a merge.
 
 The gate (`gate/policy.json`) fails the build on: a missing or empty scan report, any secret, a Semgrep ERROR, a dependency advisory scoring 9.0 or higher, a CRITICAL image vulnerability with a fix, or a High-risk ZAP alert. Known findings in the deliberately vulnerable target are waived in `gate/accepted.json`, each with a reason and an expiry date; an expired waiver trips its rule again.
 
