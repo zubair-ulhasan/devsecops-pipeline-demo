@@ -14,7 +14,7 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 | 2. Secrets scan | Scans the target for committed secrets (gitleaks, report-only) | Done |
 | 3. SAST and SCA | Static code analysis (Semgrep) and a dependency vulnerability scan (OSV-Scanner), report-only | Done |
 | 4. Image scan and SBOM | Scans the container image (Trivy) and produces a CycloneDX SBOM (Syft) as a build artifact, report-only | Done |
-| 5. DAST and quality gate | ZAP baseline and authenticated OpenAPI scans (passive) against the running container, plus an enforcing quality gate (`gate/policy.json`, waivers in `gate/accepted.json`) | Gate live and enforcing; awaiting sign-off |
+| 5. DAST and quality gate | ZAP baseline and authenticated OpenAPI scans (passive) against the running container, plus an enforcing quality gate (`gate/policy.json`, waivers in `gate/accepted.json`) | Done |
 | 6. Write-up | Before/after results against the answer key, including a multi-stage build that drops npm from the image (planned: removes 19 of the 25 Trivy findings) | Planned |
 
 ## How it works
@@ -26,7 +26,7 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 
 ## Changing this repo
 
-Intended workflow: make changes on a branch and open a pull request, so the pipeline (all five checks, including the quality gate) runs before anything reaches `main`; direct pushes to `main` are no longer the workflow. **Branch protection is not enabled yet.** GitHub offers it for a private repository only on a paid plan (or for a public repository), so for now the pull-request rule is a convention, and the gate cannot block a merge.
+Intended workflow: make changes on a branch and open a pull request, so the pipeline (all five checks, including the quality gate) runs before anything reaches `main`; direct pushes to `main` are no longer the workflow. **Branch protection is not enabled yet.** GitHub offers it for a private repository only on a paid plan (or for a public repository), so for now the pull-request rule is a convention, and the gate cannot block a merge. Protection is planned for when the repo goes public at the v1 launch (target 20 Dec 2026).
 
 The gate (`gate/policy.json`) fails the build on: a missing or empty scan report, any secret, a Semgrep ERROR, a dependency advisory scoring 9.0 or higher, a CRITICAL image vulnerability with a fix, or a High-risk ZAP alert. Known findings in the deliberately vulnerable target are waived in `gate/accepted.json`, each with a reason and an expiry date; an expired waiver trips its rule again.
 
