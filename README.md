@@ -11,7 +11,7 @@ This repo contains only the pipeline. The target is checked out at a pinned comm
 | Stage | What it does | State |
 |---|---|---|
 | 1. Build and smoke test | Builds the target into a container (non-root user, lockfile install) and checks that `/health` answers | Done (first run passed) |
-| 2. Secrets scan | Scans the target for committed secrets | Planned |
+| 2. Secrets scan | Scans the target for committed secrets (gitleaks, report-only) | Done |
 | 3. SAST and SCA | Static code analysis and a dependency vulnerability scan | Planned |
 | 4. Image scan and SBOM | Scans the container image and produces a CycloneDX SBOM as a build artifact | Planned |
 | 5. DAST and quality gate | Runs a ZAP baseline scan against the running container; fails the build on critical findings | Planned |
