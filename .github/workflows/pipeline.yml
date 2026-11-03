@@ -83,6 +83,8 @@ jobs:
           test -s reports/gitleaks.json || { echo "no gitleaks report was produced"; exit 1; }
           count="$(jq length reports/gitleaks.json)"
           echo "gitleaks findings: $count"
+          # Also print each finding to the log (rule, location, description; never the secret value).
+          jq -r '.[] | "  - \(.RuleID) | \(.File):\(.StartLine) | \(.Description) | commit \(.Commit[0:7])"' reports/gitleaks.json
           {
             echo "### Secrets scan (gitleaks v8.30.1)"
             echo
