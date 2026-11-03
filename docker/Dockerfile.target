@@ -1,6 +1,8 @@
 # Builds the target app into a container. The pipeline checks the app out into ./target first,
 # so the build context is the root of this repo and the app's own repo is never modified.
-FROM node:24-alpine
+# Pinned by digest (node 24 on Alpine, resolved 2026-11-03) so the image that is scanned cannot drift.
+# To update, look up the new digest, change it here and re-read the scan results in the same commit.
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
 
 ENV NODE_ENV=production
 WORKDIR /app

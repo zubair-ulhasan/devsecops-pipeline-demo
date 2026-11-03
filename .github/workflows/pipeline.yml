@@ -99,6 +99,7 @@ jobs:
           echo "components by package type: $(jq -r '[.components[] | (.purl // "no-purl") | split("/")[0]] | group_by(.) | map("\(.[0])=\(length)") | join(", ")' reports/sbom.cdx.json)"
           echo "components by CycloneDX type: $(jq -r '[.components[] | .type] | group_by(.) | map("\(.[0])=\(length)") | join(", ")' reports/sbom.cdx.json)"
           echo "components with no package URL (first 6): $(jq -r '[.components[] | select(.purl == null)] | .[:6] | map("\(.type):\(.name)") | join(" ; ")' reports/sbom.cdx.json)"
+          echo "runtime and other generic components: $(jq -r '[.components[] | select((.purl // "") | startswith("pkg:generic")) | "\(.name)@\(.version)"] | join(", ")' reports/sbom.cdx.json)"
           echo "npm components by location: app=$(jq '[.components[] | select((.purl // "") | startswith("pkg:npm")) | select(any(.properties[]?; (.name | test("location")) and (.value | test("^/?app/node_modules"))))] | length' reports/sbom.cdx.json), elsewhere in the image=$(jq '[.components[] | select((.purl // "") | startswith("pkg:npm")) | select(any(.properties[]?; (.name | test("location")) and (.value | test("^/?app/node_modules"))) | not)] | length' reports/sbom.cdx.json)"
           echo "sample npm component (structure check): $(jq -c '[.components[] | select((.purl // "") | startswith("pkg:npm"))][0] | {name, version, purl, property_names: [.properties[]? | .name]}' reports/sbom.cdx.json)"
           test "$fmt" = "CycloneDX" || { echo "SBOM is not CycloneDX"; exit 1; }
