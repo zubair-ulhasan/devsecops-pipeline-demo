@@ -63,7 +63,7 @@ The gap that no stage here fills is authorization testing across roles and tenan
 - Actions are pinned to commit SHAs, scanner images and base images to digests, and the Semgrep rule set to a commit. The workflow token is read-only.
 - Trivy is pulled by digest, never by tag, and its GitHub Action is not used. In March 2026 a Trivy release, two Docker Hub images and most `trivy-action` tags were briefly malicious ([GHSA-69fq-xp46-6x23](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23)); images referenced by digest were not affected. The pinned release is immutable and newer than the fix for a later path-traversal advisory.
 - Scanners read an exported image tarball from a read-only mount, so none of them gets the Docker socket. Telemetry is off.
-- DAST safety: the API spec lists the target's hosted instance as its first server, so the workflow rewrites it to `localhost` and fails if the hosted URL is still present. The test password is read at run time from the target's own answer key and the token is masked and checked absent from every report kept, so no credential is stored here.
+- DAST safety: the API spec may list a hosted instance as a server, so the workflow rewrites every server entry to `localhost` and fails if any other server URL is left. The test password is read at run time from the target's own answer key and the token is masked and checked absent from every report kept, so no credential is stored here.
 
 ## The quality gate
 
@@ -82,7 +82,7 @@ The target is deliberately vulnerable, so three known findings are waived in `ga
 
 ## Changing this repo
 
-Make changes on a branch and open a pull request, so the pipeline (all five checks, including the quality gate) runs before anything reaches `main`; direct pushes to `main` are no longer the workflow. **Branch protection is not enabled yet.** GitHub offers it for a private repository only on a paid plan (or for a public repository), so for now the pull-request rule is a convention and the gate cannot block a merge. Protection is planned for when the repo goes public at the v1 launch (target 20 Dec 2026).
+Make changes on a branch and open a pull request, so the pipeline (all five checks, including the quality gate) runs before anything reaches `main`; direct pushes to `main` are no longer the workflow. `main` is protected: a pull request is required, and all five checks, including the quality gate, must pass before it can merge. The rule applies to admins too.
 
 To scan newer target code, set `TARGET_REF` at the top of the workflow to a new commit SHA of `auto_fix_mcp` in a commit of its own, so the change in results is traceable.
 
@@ -95,7 +95,7 @@ To scan newer target code, set `TARGET_REF` at the top of the workflow to a new 
 | 3. SAST and SCA | Static analysis (Semgrep) and a dependency vulnerability scan (OSV-Scanner) | Done |
 | 4. Image scan and SBOM | Scans the container image (Trivy) and produces a CycloneDX SBOM (Syft) | Done |
 | 5. DAST and quality gate | ZAP baseline and authenticated OpenAPI scans (passive), plus an enforcing quality gate | Done |
-| 6. Write-up | The results above, including the multi-stage before/after | Written, awaiting review |
+| 6. Write-up | The results above, including the multi-stage before/after | Done |
 
 ## Not covered yet
 
@@ -112,6 +112,10 @@ docker build -f docker/Dockerfile.target -t auto-fix-mcp-target:ci .
 docker run -d --name target -p 3000:3000 auto-fix-mcp-target:ci
 bash scripts/smoke-test.sh http://localhost:3000/health
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE). The target app and the Semgrep rules it is scanned with are separate projects under their own licences; the rules are fetched at run time and are not included here.
 
 ## Warning
 

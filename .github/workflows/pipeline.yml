@@ -135,7 +135,7 @@ jobs:
           path: |
             reports/sbom.cdx.json
             reports/trivy.json
-          retention-days: 14
+          retention-days: 3
 
       # Stage 5a. DAST with ZAP against the container that is still running on port 3000.
       # Passive only: the baseline scan crawls and inspects responses without attacking, and the API
@@ -155,10 +155,14 @@ jobs:
 
       - name: DAST, API scan from the OpenAPI spec (ZAP, passive, logged in as the lowest-privilege user)
         run: |
-          # Point the spec at the local container only: its first server entry is the hosted instance.
+          # Point the spec at the local container only. The spec may list a hosted server first, so every
+          # server entry is rewritten to localhost, and the job fails if any other server URL is left.
           cp target/openapi.yaml reports/zap/openapi.yaml
-          sed -i 's#https://auto-fix-mcp.onrender.com#http://localhost:3000#g' reports/zap/openapi.yaml
-          if grep -q -i onrender reports/zap/openapi.yaml; then echo "the spec still points at the hosted instance"; exit 1; fi
+          sed -i -E 's#^([[:space:]]*-?[[:space:]]*url:[[:space:]]*)https?://[^[:space:]]+#\1http://localhost:3000#' reports/zap/openapi.yaml
+          servers="$(grep -c -E '^[[:space:]]*-?[[:space:]]*url:' reports/zap/openapi.yaml || true)"
+          foreign="$(grep -E '^[[:space:]]*-?[[:space:]]*url:' reports/zap/openapi.yaml | grep -v -c -F 'http://localhost:3000' || true)"
+          echo "server entries in the spec copy: $servers (not pointing at localhost: $foreign)"
+          test "$servers" -gt 0 -a "$foreign" = "0" || { echo "the spec still names a server other than localhost"; exit 1; }
           # Log in as the seeded customer account. The password is read from the target's own public
           # answer key at run time, so no credential is stored in this repo. The token is masked.
           user="customer@account1.test"
@@ -200,8 +204,8 @@ jobs:
       - name: Log what ran and summarise the DAST findings
         run: |
           for f in zap-baseline zap-api; do test -s "reports/zap/$f.json" || { echo "no $f report was produced"; exit 1; }; done
-          echo "mentions of the hosted instance in the ZAP logs and spec copy (all must be 0):"
-          grep -c -i onrender reports/zap/baseline.log reports/zap/api.log reports/zap/openapi.yaml || true
+          echo "server URLs in the spec copy (must all be localhost): $(grep -E '^[[:space:]]*-?[[:space:]]*url:' reports/zap/openapi.yaml | sed 's/^.*url:[[:space:]]*//' | sort -u | tr '\n' ' ')"
+          echo "other hosts named in the ZAP logs (informational): $(grep -h -o -E 'https?://[A-Za-z0-9._-]+' reports/zap/baseline.log reports/zap/api.log | grep -v -E '^https?://(localhost|127\.0\.0\.1)$' | sort -u | tr '\n' ' ')"
           echo "operations in the spec: $(grep -c -E '^    (get|post|put|patch|delete):' reports/zap/openapi.yaml)"
           for f in baseline api-noauth api; do
             j="reports/zap/zap-$f.json"
@@ -221,7 +225,7 @@ jobs:
           path: |
             reports/zap/zap-baseline.json
             reports/zap/zap-api.json
-          retention-days: 14
+          retention-days: 3
 
       - name: Show container logs if anything failed
         if: failure()
@@ -278,7 +282,7 @@ jobs:
         with:
           name: gitleaks-report
           path: reports/gitleaks.json
-          retention-days: 14
+          retention-days: 3
 
   # Stage 3a. Static analysis (SAST) with Semgrep. Report-only until the stage-5 gate.
   # The scanner image and the rule set are both pinned, so the same code gives the same findings.
@@ -347,7 +351,7 @@ jobs:
         with:
           name: semgrep-report
           path: reports/semgrep.json
-          retention-days: 14
+          retention-days: 3
 
   # Stage 3b. Dependency scan (SCA) with OSV-Scanner on the lockfile. Report-only until stage 5.
   sca:
@@ -404,7 +408,7 @@ jobs:
         with:
           name: osv-report
           path: reports/osv.json
-          retention-days: 14
+          retention-days: 3
 
   # Stage 5b. The quality gate. ENFORCING (gate/policy.json, "enforce": true): a tripped rule or a
   # missing report fails this job, and branch protection requires it before anything merges to main.
